@@ -51,3 +51,7 @@ For actual restricted access while keeping GitHub Pages, put an access-control p
 5. For cloud storage, configure a private Evolution bucket and add a backend for pre-signed upload/download URLs before enabling cloud uploads.
 
 Check Evolution Object Storage's current pricing, free allowance, traffic/egress fees and S3-compatible API details before launch; free quotas and offers can change.
+
+
+## v3 PIN screen fix
+Fixed the initialization order: the DOM lookup helper is declared before the PIN screen uses it. Removed an unnecessary upload button handler assignment.
