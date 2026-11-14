@@ -72,6 +72,7 @@ main{padding:34px clamp(18px,4vw,58px);max-width:1500px;width:100%;margin:auto}.
 </footer>
 <audio id="audio" crossorigin="anonymous"></audio>
 <script>
+const $ = id => document.getElementById(id);
 
 // PIN gate: a lightweight privacy screen for a small trusted group.
 // This is NOT strong authentication: GitHub Pages serves public client-side code.
@@ -99,7 +100,7 @@ else{
 }
 
 const DB='sonora-web-db', STORE='tracks';let db,tracks=[],current=-1,objectUrl=null,ctx=null,filters=[],eqOn=true,repeat=false,shuffle=false;
-const $=id=>document.getElementById(id),audio=$('audio');
+const audio=$('audio');
 const freqs=[31,62,125,250,500,1000,2000,4000,8000,16000],labels=['31','62','125','250','500','1k','2k','4k','8k','16k'];
 const presets={
 'Flat':[0,0,0,0,0,0,0,0,0,0],
@@ -125,7 +126,6 @@ $('trackList').querySelectorAll('.track').forEach(el=>el.querySelector('.track-n
 }
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function chooseFiles(){$('fileInput').click()}
-$('uploadBtn').onclick=$('heroUpload').onclick=$('emptyUpload')?.addEventListener; // replaced below
 $('uploadBtn').onclick=chooseFiles;$('heroUpload').onclick=chooseFiles;
 $('fileInput').onchange=async e=>{for(let f of e.target.files){if(!f.type.startsWith('audio/'))continue;let rec={name:nameFromFile(f.name),artist:'',type:f.type,size:f.size,blob:f,duration:0,added:Date.now()};let id=await dbReq('readwrite',s=>s.add(rec));rec.id=id;let temp=URL.createObjectURL(f),a=new Audio();a.onloadedmetadata=async()=>{rec.duration=a.duration;await dbReq('readwrite',s=>s.put(rec));tracks=await dbReq('readonly',s=>s.getAll());render();URL.revokeObjectURL(temp)};a.src=temp;tracks.push(rec)}render();e.target.value=''};
 function playId(id){let idx=tracks.findIndex(t=>t.id===id);if(idx<0)return;current=idx;loadCurrent(true)}
