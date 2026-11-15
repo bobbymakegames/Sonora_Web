@@ -52,13 +52,13 @@ main{padding:34px clamp(18px,4vw,58px);max-width:1500px;width:100%;margin:auto}.
     <button id="eqNav"><span class="ico">☷</span><span class="navtext">Эквалайзер</span></button>
     <button id="favNav"><span class="ico">♡</span><span class="navtext">Избранное</span></button>
   </nav></div>
-  <div class="sidebar-note">Твоя музыка. Твои правила.<br><br>Загружай любимые треки и слушай их в одном месте.</div>
+  <div class="sidebar-note">Облачная библиотека Cloud.ru и локальные треки этого устройства.</div>
 </aside>
 <main>
-  <div class="topbar"><div class="greeting"><h1>Добро пожаловать в Sonora</h1><p>Твоя музыка — всегда под рукой.</p></div><div class="actions"><input id="search" class="search" placeholder="⌕  Найти трек или исполнителя"><button class="primary" id="uploadBtn">＋ Добавить музыку</button><input id="fileInput" type="file" accept="audio/*" multiple hidden></div></div>
-  <section class="hero"><div class="hero-card"><div class="hero-copy"><div class="eyebrow">ТВОЯ МУЗЫКА</div><h2>Звучание, которое подходит тебе</h2><p>Собери свою идеальную коллекцию.</p><button class="primary" id="heroUpload">Загрузить треки&nbsp; ↗</button></div><div class="disc"></div></div><div class="stat-card"><div class="stat-top">ТВОЯ КОЛЛЕКЦИЯ</div><div class="stat-num" id="trackCount">0 треков</div><div class="stat-bottom" id="storageInfo">Музыка хранится в этом браузере</div></div></section>
+  <div class="topbar"><div class="greeting"><h1>Добро пожаловать в Sonora</h1><p>Твоя музыка — всегда под рукой.</p></div><div class="actions"><input id="search" class="search" placeholder="⌕  Найти трек или исполнителя"><button class="primary" id="uploadBtn">＋ Добавить локально</button><input id="fileInput" type="file" accept="audio/*" multiple hidden></div></div>
+  <section class="hero"><div class="hero-card"><div class="hero-copy"><div class="eyebrow">ТВОЯ МУЗЫКА</div><h2>Звучание, которое подходит тебе</h2><p>Собери свою идеальную коллекцию.</p><button class="primary" id="heroUpload">Добавить локальные треки&nbsp; ↗</button></div><div class="disc"></div></div><div class="stat-card"><div class="stat-top">ТВОЯ КОЛЛЕКЦИЯ</div><div class="stat-num" id="trackCount">0 треков</div><div class="stat-bottom" id="storageInfo">Загрузка облачной библиотеки…</div></div></section>
   <div class="section-head" id="library"><h2>Недавно добавленные</h2><span id="listCount">0 композиций</span></div>
-  <div class="track-list" id="trackList"><div class="empty"><strong>Пока здесь тихо</strong>Добавь свои аудиофайлы, чтобы начать слушать.<br><br><button class="secondary" id="emptyUpload">＋ Выбрать музыку</button></div></div>
+  <div class="track-list" id="trackList"><div class="empty"><strong>Пока здесь тихо</strong>Добавь аудио в облачную библиотеку или выбери локальные файлы.<br><br><button class="secondary" id="emptyUpload">＋ Выбрать музыку</button></div></div>
   <div class="section-head" id="equalizer"><h2>Эквалайзер</h2><span>10 полос · −12 / +12 dB</span></div>
   <section class="eq-panel"><div class="eq-top"><div><strong>Настрой звучание</strong><div class="track-meta">Изменения применяются к текущему воспроизведению</div></div><button class="secondary" id="eqToggle">Эквалайзер: Вкл.</button></div>
     <div class="eq-presets" id="presets"></div><div class="bands" id="bands"></div>
@@ -99,7 +99,10 @@ else{
  document.addEventListener('keydown',e=>{if(!$('lockScreen'))return;if(/^[0-9]$/.test(e.key))addPinKey(e.key);else if(e.key==='Backspace')addPinKey('back');else if(e.key==='Escape')addPinKey('clear')});
 }
 
-const DB='sonora-web-db', STORE='tracks';let db,tracks=[],current=-1,objectUrl=null,ctx=null,filters=[],eqOn=true,repeat=false,shuffle=false;
+const DB='sonora-web-db', STORE='tracks';
+const CLOUD_MANIFEST_URL='https://global.s3.cloud.ru/sonora-music/tracks.json';
+let db,tracks=[],localTracks=[],cloudTracks=[],current=-1,objectUrl=null,ctx=null,filters=[],eqOn=true,repeat=false,shuffle=false;
+
 const audio=$('audio');
 const freqs=[31,62,125,250,500,1000,2000,4000,8000,16000],labels=['31','62','125','250','500','1k','2k','4k','8k','16k'];
 const presets={
@@ -118,28 +121,94 @@ function openDB(){return new Promise((resolve,reject)=>{let r=indexedDB.open(DB,
 function dbReq(mode,fn){return new Promise((resolve,reject)=>{let tx=db.transaction(STORE,mode),s=tx.objectStore(STORE),r=fn(s);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)})}
 function fmt(s){if(!Number.isFinite(s))return'0:00';return Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0')}
 function nameFromFile(n){return n.replace(/\.[^.]+$/,'').replace(/[_-]+/g,' ').trim()}
-async function init(){db=await openDB();tracks=await dbReq('readonly',s=>s.getAll());render();makeEQ();$('presets').innerHTML=Object.keys(presets).map((p,i)=>`<button class="preset ${i===0?'active':''}" data-preset="${p}">${p}</button>`).join('');$('presets').addEventListener('click',e=>{let b=e.target.closest('[data-preset]');if(!b)return;applyPreset(b.dataset.preset);document.querySelectorAll('.preset').forEach(x=>x.classList.toggle('active',x===b))});}
-function render(){let q=$('search').value.toLowerCase();let visible=tracks.filter(t=>(t.name+' '+(t.artist||'')).toLowerCase().includes(q));$('trackCount').textContent=tracks.length+' '+(tracks.length===1?'трек':tracks.length<5?'трека':'треков');$('listCount').textContent=visible.length+' композиций';$('storageInfo').textContent='Сохранено в этом браузере · '+(tracks.reduce((a,t)=>a+t.size,0)/1048576).toFixed(1)+' МБ';
-if(!visible.length){$('trackList').innerHTML='<div class="empty"><strong>'+(tracks.length?'Ничего не найдено':'Пока здесь тихо')+'</strong>'+(tracks.length?'Попробуй изменить запрос.':'Добавь свои аудиофайлы, чтобы начать слушать.')+'<br><br><button class="secondary" id="emptyUpload">＋ Выбрать музыку</button></div>';$('emptyUpload').onclick=chooseFiles;return}
-$('trackList').innerHTML=visible.map(t=>`<div class="track" data-id="${t.id}"><div class="cover">♫</div><div><div class="track-name">${esc(t.name)}</div><div class="track-meta">${esc(t.artist||'Локальная коллекция')}</div></div><div class="duration">${t.duration?fmt(t.duration):'—'}</div><button class="icon-btn delete" title="Удалить трек" data-delete="${t.id}">✕</button></div>`).join('');
-$('trackList').querySelectorAll('.track').forEach(el=>el.querySelector('.track-name').addEventListener('click',()=>playId(+el.dataset.id)));$('trackList').querySelectorAll('.cover').forEach(el=>el.addEventListener('click',()=>playId(+el.closest('.track').dataset.id)));$('trackList').querySelectorAll('[data-delete]').forEach(b=>b.onclick=async e=>{e.stopPropagation();let id=+b.dataset.delete;if(current>=0&&tracks[current]?.id===id)stopTrack();await dbReq('readwrite',s=>s.delete(id));tracks=tracks.filter(t=>t.id!==id);render()});
+async function loadCloudTracks(){
+ try{
+  const response=await fetch(CLOUD_MANIFEST_URL,{cache:'no-store'});
+  if(!response.ok)throw new Error('HTTP '+response.status);
+  const data=await response.json();
+  if(!Array.isArray(data.tracks))throw new Error('В tracks.json нет массива tracks');
+  return data.tracks.filter(t=>t&&typeof t.url==='string'&&/^https:\/\//i.test(t.url)).map((t,i)=>({
+   id:'cloud-'+i,source:'cloud',name:String(t.title||t.name||'Без названия'),
+   artist:String(t.artist||''),duration:Number(t.duration)||0,size:Number(t.size)||0,
+   url:t.url
+  }));
+ }catch(e){
+  console.warn('Cloud library unavailable:',e);
+  $('storageInfo').textContent='Облако пока недоступно · проверь tracks.json и CORS';
+  return [];
+ }
+}
+async function init(){
+ db=await openDB();
+ localTracks=await dbReq('readonly',s=>s.getAll());
+ cloudTracks=await loadCloudTracks();
+ tracks=[...cloudTracks,...localTracks.map(t=>({...t,source:'local'}))];
+ render();makeEQ();
+ $('presets').innerHTML=Object.keys(presets).map((p,i)=>`<button class="preset ${i===0?'active':''}" data-preset="${p}">${p}</button>`).join('');
+ $('presets').addEventListener('click',e=>{let b=e.target.closest('[data-preset]');if(!b)return;applyPreset(b.dataset.preset);document.querySelectorAll('.preset').forEach(x=>x.classList.toggle('active',x===b))});
+}
+function render(){
+ let q=$('search').value.toLowerCase();
+ let visible=tracks.filter(t=>(t.name+' '+(t.artist||'')).toLowerCase().includes(q));
+ $('trackCount').textContent=tracks.length+' '+(tracks.length===1?'трек':tracks.length<5?'трека':'треков');
+ $('listCount').textContent=visible.length+' композиций';
+ $('storageInfo').textContent=`Облако: ${cloudTracks.length} · На этом устройстве: ${localTracks.length}`;
+ if(!visible.length){
+  $('trackList').innerHTML='<div class="empty"><strong>'+(tracks.length?'Ничего не найдено':'Пока здесь тихо')+'</strong>'+(tracks.length?'Попробуй изменить запрос.':'Добавь аудио в Cloud.ru и обнови tracks.json или выбери локальные файлы.')+'<br><br><button class="secondary" id="emptyUpload">＋ Выбрать музыку на устройстве</button></div>';
+  $('emptyUpload').onclick=chooseFiles;return;
+ }
+ $('trackList').innerHTML=visible.map(t=>`<div class="track" data-id="${esc(t.id)}"><div class="cover">♫</div><div><div class="track-name">${esc(t.name)}</div><div class="track-meta">${esc(t.artist||(t.source==='cloud'?'Cloud.ru':'На этом устройстве'))}</div></div><div class="duration">${t.duration?fmt(t.duration):'—'}</div>${t.source==='local'?`<button class="icon-btn delete" title="Удалить локальный трек" data-delete="${t.id}">✕</button>`:'<span></span>'}</div>`).join('');
+ $('trackList').querySelectorAll('.track').forEach(el=>{
+  const play=()=>playId(el.dataset.id);
+  el.querySelector('.track-name').addEventListener('click',play);
+  el.querySelector('.cover').addEventListener('click',play);
+ });
+ $('trackList').querySelectorAll('[data-delete]').forEach(b=>b.onclick=async e=>{
+  e.stopPropagation();let id=Number(b.dataset.delete);
+  if(current>=0&&String(tracks[current]?.id)===String(id))stopTrack();
+  await dbReq('readwrite',s=>s.delete(id));
+  localTracks=localTracks.filter(t=>t.id!==id);
+  tracks=[...cloudTracks,...localTracks.map(t=>({...t,source:'local'}))];
+  render();
+ });
 }
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function chooseFiles(){$('fileInput').click()}
 $('uploadBtn').onclick=chooseFiles;$('heroUpload').onclick=chooseFiles;
-$('fileInput').onchange=async e=>{for(let f of e.target.files){if(!f.type.startsWith('audio/'))continue;let rec={name:nameFromFile(f.name),artist:'',type:f.type,size:f.size,blob:f,duration:0,added:Date.now()};let id=await dbReq('readwrite',s=>s.add(rec));rec.id=id;let temp=URL.createObjectURL(f),a=new Audio();a.onloadedmetadata=async()=>{rec.duration=a.duration;await dbReq('readwrite',s=>s.put(rec));tracks=await dbReq('readonly',s=>s.getAll());render();URL.revokeObjectURL(temp)};a.src=temp;tracks.push(rec)}render();e.target.value=''};
-function playId(id){let idx=tracks.findIndex(t=>t.id===id);if(idx<0)return;current=idx;loadCurrent(true)}
-function loadCurrent(auto){let t=tracks[current];if(!t)return; if(objectUrl)URL.revokeObjectURL(objectUrl);objectUrl=URL.createObjectURL(t.blob);audio.src=objectUrl;$('nowTitle').textContent=t.name;$('nowArtist').textContent=t.artist||'Локальная коллекция';if(auto)audio.play().then(()=>{$('play').textContent='Ⅱ'}).catch(()=>{$('play').textContent='▶'});render()}
+$('fileInput').onchange=async e=>{
+ for(let f of e.target.files){
+  if(!f.type.startsWith('audio/'))continue;
+  let rec={name:nameFromFile(f.name),artist:'',type:f.type,size:f.size,blob:f,duration:0,added:Date.now()};
+  let id=await dbReq('readwrite',s=>s.add(rec));rec.id=id;
+  let temp=URL.createObjectURL(f),a=new Audio();
+  a.onloadedmetadata=async()=>{
+   rec.duration=a.duration;await dbReq('readwrite',s=>s.put(rec));
+   localTracks=await dbReq('readonly',s=>s.getAll());
+   tracks=[...cloudTracks,...localTracks.map(t=>({...t,source:'local'}))];
+   render();URL.revokeObjectURL(temp);
+  };
+  a.src=temp;localTracks.push(rec);
+ }
+ tracks=[...cloudTracks,...localTracks.map(t=>({...t,source:'local'}))];render();e.target.value='';
+};
+function playId(id){let idx=tracks.findIndex(t=>String(t.id)===String(id));if(idx<0)return;current=idx;loadCurrent(true)}
+function loadCurrent(auto){
+ let t=tracks[current];if(!t)return;
+ if(objectUrl){URL.revokeObjectURL(objectUrl);objectUrl=null}
+ audio.src=t.source==='cloud'?t.url:(objectUrl=URL.createObjectURL(t.blob));
+ $('nowTitle').textContent=t.name;
+ $('nowArtist').textContent=t.artist||(t.source==='cloud'?'Cloud.ru':'На этом устройстве');
+ if(auto)audio.play().then(()=>$('play').textContent='Ⅱ').catch(()=>{$('play').textContent='▶'});
+ render();
+}
 function stopTrack(){audio.pause();audio.removeAttribute('src');audio.load();if(objectUrl)URL.revokeObjectURL(objectUrl);objectUrl=null;current=-1;$('play').textContent='▶';$('nowTitle').textContent='Ничего не играет';$('nowArtist').textContent='Выбери трек из библиотеки'}
 function step(dir){if(!tracks.length)return;let n;if(shuffle)n=Math.floor(Math.random()*tracks.length);else n=(current+dir+tracks.length)%tracks.length;current=n;loadCurrent(true)}
 $('play').onclick=()=>{if(current<0){if(tracks.length)playId(tracks[0].id);return}if(audio.paused)audio.play().then(()=>$('play').textContent='Ⅱ');else{audio.pause();$('play').textContent='▶'}};
 $('prev').onclick=()=>step(-1);$('next').onclick=()=>step(1);$('shuffle').onclick=()=>{shuffle=!shuffle;$('shuffle').style.color=shuffle?'var(--accent2)':''};$('repeat').onclick=()=>{repeat=!repeat;audio.loop=repeat;$('repeat').style.color=repeat?'var(--accent2)':''};
 audio.onended=()=>{if(!repeat)step(1)};audio.ontimeupdate=()=>{$('currentTime').textContent=fmt(audio.currentTime);$('duration').textContent=fmt(audio.duration);if(audio.duration)$('seek').value=audio.currentTime/audio.duration*1000};$('seek').oninput=()=>{if(audio.duration)audio.currentTime=$('seek').value/1000*audio.duration};$('volume').oninput=()=>audio.volume=+$('volume').value;audio.volume=.8;
-function makeEQ(){try{ctx=new (window.AudioContext||window.webkitAudioContext)();let src=ctx.createMediaElementSource(audio),prev=src;freqs.forEach((f,i)=>{let filter=ctx.createBiquadFilter();filter.type=i===0?'lowshelf':i===9?'highshelf':'peaking';filter.frequency.value=f;filter.Q.value=1;filter.gain.value=0;prev.connect(filter);prev=filter;filters.push(filter)});prev.connect(ctx.destination)}catch(e){console.warn('Web Audio unavailable',e)}}
-function applyPreset(p){let vals=presets[p];vals.forEach((v,i)=>{if(filters[i])filters[i].gain.setTargetAtTime(eqOn?v:0,ctx.currentTime,.03);let inp=$('band'+i);if(inp)inp.value=v;let out=$('out'+i);if(out)out.textContent=(v>0?'+':'')+v})}
 function makeEQ(){try{ctx=new (window.AudioContext||window.webkitAudioContext)();let src=ctx.createMediaElementSource(audio),prev=src;freqs.forEach((f,i)=>{let filter=ctx.createBiquadFilter();filter.type=i===0?'lowshelf':i===9?'highshelf':'peaking';filter.frequency.value=f;filter.Q.value=1;filter.gain.value=0;prev.connect(filter);prev=filter;filters.push(filter)});prev.connect(ctx.destination);$('bands').innerHTML=freqs.map((f,i)=>`<div class="band"><output id="out${i}">0</output><input id="band${i}" type="range" min="-12" max="12" value="0" step="1" aria-label="${f} Hz"><b>${labels[i]}</b></div>`).join('');freqs.forEach((f,i)=>$('band'+i).oninput=e=>{let v=+e.target.value;filters[i].gain.setTargetAtTime(eqOn?v:0,ctx.currentTime,.03);$('out'+i).textContent=(v>0?'+':'')+v;document.querySelectorAll('.preset').forEach(x=>x.classList.remove('active'))})}catch(e){$('bands').textContent='Эквалайзер не поддерживается этим браузером'}}
 $('eqToggle').onclick=()=>{eqOn=!eqOn;filters.forEach((f,i)=>f.gain.setTargetAtTime(eqOn?+$('band'+i).value:0,ctx.currentTime,.03));$('eqToggle').textContent='Эквалайзер: '+(eqOn?'Вкл.':'Выкл.')};
 $('search').oninput=render;
 function go(id){$(id).scrollIntoView({behavior:'smooth',block:'start'})}
-$('libraryNav').onclick=$('mLibrary').onclick=()=>go('library');$('eqNav').onclick=$('mEq').onclick=()=>go('equalizer');$('favNav').onclick=()=>alert('Раздел избранного можно подключить в следующей версии.');init().catch(e=>alert('Не удалось открыть локальную медиатеку: '+e.message));
+$('libraryNav').onclick=$('mLibrary').onclick=()=>go('library');$('eqNav').onclick=$('mEq').onclick=()=>go('equalizer');$('favNav').onclick=()=>alert('Раздел избранного можно подключить в следующей версии.');init().catch(e=>alert('Не удалось запустить Sonora: '+e.message));
 </script></body></html>
