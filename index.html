@@ -191,23 +191,231 @@ $('fileInput').onchange=async e=>{
  }
  tracks=[...cloudTracks,...localTracks.map(t=>({...t,source:'local'}))];render();e.target.value='';
 };
-function playId(id){let idx=tracks.findIndex(t=>String(t.id)===String(id));if(idx<0)return;current=idx;loadCurrent(true)}
-function loadCurrent(auto){
- let t=tracks[current];if(!t)return;
- if(objectUrl){URL.revokeObjectURL(objectUrl);objectUrl=null}
- audio.src=t.source==='cloud'?t.url:(objectUrl=URL.createObjectURL(t.blob));
- $('nowTitle').textContent=t.name;
- $('nowArtist').textContent=t.artist||(t.source==='cloud'?'Cloud.ru':'На этом устройстве');
- if(auto)audio.play().then(()=>$('play').textContent='Ⅱ').catch(()=>{$('play').textContent='▶'});
- render();
+function playId(id) {
+    let idx = tracks.findIndex(t => String(t.id) === String(id));
+    if (idx < 0) return;
+
+    current = idx;
+    loadCurrent(true);
+}
+
+async function startAudioPlayback() {
+    try {
+        // Возобновляем аудиоконтекст браузера
+        if (ctx && ctx.state === 'suspended') {
+            await ctx.resume();
+        }
+
+        await audio.play();
+        $('play').textContent = 'Ⅱ';
+
+    } catch (error) {
+        console.error('Playback error:', error);
+
+        $('play').textContent = '▶';
+        $('nowArtist').textContent =
+            'Ошибка воспроизведения: ' + error.message;
+    }
+}
+
+function loadCurrent(auto) {
+    let t = tracks[current];
+    if (!t) return;
+
+    if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+        objectUrl = null;
+    }
+
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load();
+
+    audio.crossOrigin = 'anonymous';
+
+    if (t.source === 'cloud') {
+        audio.src = t.url;
+    } else {
+        objectUrl = URL.createObjectURL(t.blob);
+        audio.src = objectUrl;
+    }
+
+    audio.load();
+
+    $('nowTitle').textContent = t.name;
+    $('nowArtist').textContent =
+        t.artist || (t.source === 'cloud'
+            ? 'Cloud.ru'
+            : 'На этом устройстве');
+
+    if (auto) {
+        startAudioPlayback();
+    }
+
+    render();
 }
 function stopTrack(){audio.pause();audio.removeAttribute('src');audio.load();if(objectUrl)URL.revokeObjectURL(objectUrl);objectUrl=null;current=-1;$('play').textContent='▶';$('nowTitle').textContent='Ничего не играет';$('nowArtist').textContent='Выбери трек из библиотеки'}
 function step(dir){if(!tracks.length)return;let n;if(shuffle)n=Math.floor(Math.random()*tracks.length);else n=(current+dir+tracks.length)%tracks.length;current=n;loadCurrent(true)}
-$('play').onclick=()=>{if(current<0){if(tracks.length)playId(tracks[0].id);return}if(audio.paused)audio.play().then(()=>$('play').textContent='Ⅱ');else{audio.pause();$('play').textContent='▶'}};
+$('play').onclick = () => {
+    if (current < 0) {
+        if (tracks.length) playId(tracks[0].id);
+        return;
+    }
+
+    if (audio.paused) {
+        startAudioPlayback();
+    } else {
+        audio.pause();
+        $('play').textContent = '▶';
+    }
+};
 $('prev').onclick=()=>step(-1);$('next').onclick=()=>step(1);$('shuffle').onclick=()=>{shuffle=!shuffle;$('shuffle').style.color=shuffle?'var(--accent2)':''};$('repeat').onclick=()=>{repeat=!repeat;audio.loop=repeat;$('repeat').style.color=repeat?'var(--accent2)':''};
 audio.onended=()=>{if(!repeat)step(1)};audio.ontimeupdate=()=>{$('currentTime').textContent=fmt(audio.currentTime);$('duration').textContent=fmt(audio.duration);if(audio.duration)$('seek').value=audio.currentTime/audio.duration*1000};$('seek').oninput=()=>{if(audio.duration)audio.currentTime=$('seek').value/1000*audio.duration};$('volume').oninput=()=>audio.volume=+$('volume').value;audio.volume=.8;
-function makeEQ(){try{ctx=new (window.AudioContext||window.webkitAudioContext)();let src=ctx.createMediaElementSource(audio),prev=src;freqs.forEach((f,i)=>{let filter=ctx.createBiquadFilter();filter.type=i===0?'lowshelf':i===9?'highshelf':'peaking';filter.frequency.value=f;filter.Q.value=1;filter.gain.value=0;prev.connect(filter);prev=filter;filters.push(filter)});prev.connect(ctx.destination);$('bands').innerHTML=freqs.map((f,i)=>`<div class="band"><output id="out${i}">0</output><input id="band${i}" type="range" min="-12" max="12" value="0" step="1" aria-label="${f} Hz"><b>${labels[i]}</b></div>`).join('');freqs.forEach((f,i)=>$('band'+i).oninput=e=>{let v=+e.target.value;filters[i].gain.setTargetAtTime(eqOn?v:0,ctx.currentTime,.03);$('out'+i).textContent=(v>0?'+':'')+v;document.querySelectorAll('.preset').forEach(x=>x.classList.remove('active'))})}catch(e){$('bands').textContent='Эквалайзер не поддерживается этим браузером'}}
-$('eqToggle').onclick=()=>{eqOn=!eqOn;filters.forEach((f,i)=>f.gain.setTargetAtTime(eqOn?+$('band'+i).value:0,ctx.currentTime,.03));$('eqToggle').textContent='Эквалайзер: '+(eqOn?'Вкл.':'Выкл.')};
+audio.onplay = () => {
+    $('play').textContent = 'Ⅱ';
+};
+
+audio.onpause = () => {
+    $('play').textContent = '▶';
+};
+
+audio.onerror = () => {
+    console.error('Audio error:', audio.error);
+
+    $('nowArtist').textContent =
+        'Ошибка аудио: проверь ссылку, формат или CORS';
+};
+function setEQBand(i, value) {
+    const v = Math.max(-12, Math.min(12, Number(value) || 0));
+
+    const slider = $('band' + i);
+    const output = $('out' + i);
+
+    if (slider) slider.value = String(v);
+
+    if (output) {
+        output.textContent = (v > 0 ? '+' : '') + v;
+    }
+
+    if (filters[i] && ctx) {
+        const now = ctx.currentTime;
+
+        filters[i].gain.cancelScheduledValues(now);
+        filters[i].gain.setTargetAtTime(
+            eqOn ? v : 0,
+            now,
+            0.03
+        );
+    }
+}
+
+// Применение пресета
+function applyPreset(name) {
+    const values = presets[name];
+
+    if (!values) return;
+
+    eqOn = true;
+
+    $('eqToggle').textContent = 'Эквалайзер: Вкл.';
+
+    values.forEach((value, i) => {
+        setEQBand(i, value);
+    });
+}
+
+// Создание эквалайзера
+function makeEQ() {
+    try {
+        const AudioContextClass =
+            window.AudioContext || window.webkitAudioContext;
+
+        if (!AudioContextClass) {
+            throw new Error('Web Audio API недоступен');
+        }
+
+        ctx = new AudioContextClass();
+
+        const source = ctx.createMediaElementSource(audio);
+
+        let previous = source;
+
+        freqs.forEach((f, i) => {
+            const filter = ctx.createBiquadFilter();
+
+            filter.type =
+                i === 0 ? 'lowshelf' :
+                i === 9 ? 'highshelf' :
+                'peaking';
+
+            filter.frequency.value = f;
+            filter.Q.value = 1;
+            filter.gain.value = 0;
+
+            previous.connect(filter);
+            previous = filter;
+
+            filters.push(filter);
+        });
+
+        previous.connect(ctx.destination);
+
+        $('bands').innerHTML = freqs.map((f, i) => `
+            <div class="band">
+                <output id="out${i}">0</output>
+                <input
+                    id="band${i}"
+                    type="range"
+                    min="-12"
+                    max="12"
+                    value="0"
+                    step="1"
+                    aria-label="${f} Hz"
+                >
+                <b>${labels[i]}</b>
+            </div>
+        `).join('');
+
+        freqs.forEach((f, i) => {
+            $('band' + i).oninput = e => {
+                setEQBand(i, e.target.value);
+
+                document.querySelectorAll('.preset')
+                    .forEach(x => x.classList.remove('active'));
+            };
+        });
+
+    } catch (error) {
+        console.error('EQ error:', error);
+
+        $('bands').textContent =
+            'Эквалайзер не поддерживается этим браузером';
+
+        $('eqToggle').disabled = true;
+    }
+}
+
+// Включение и выключение эквалайзера
+$('eqToggle').onclick = () => {
+    eqOn = !eqOn;
+
+    filters.forEach((filter, i) => {
+        if (!ctx) return;
+
+        const now = ctx.currentTime;
+
+        filter.gain.cancelScheduledValues(now);
+
+        filter.gain.setTargetAtTime(
+            eqOn ? Number($('band' + i).value) : 0,
+            now,
+            0.03
+        );
+    });
+
+    $('eqToggle').textContent =
+        'Эквалайзер: ' + (eqOn ? 'Вкл.' : 'Выкл.');
+};
 $('search').oninput=render;
 function go(id){$(id).scrollIntoView({behavior:'smooth',block:'start'})}
 $('libraryNav').onclick=$('mLibrary').onclick=()=>go('library');$('eqNav').onclick=$('mEq').onclick=()=>go('equalizer');$('favNav').onclick=()=>alert('Раздел избранного можно подключить в следующей версии.');init().catch(e=>alert('Не удалось запустить Sonora: '+e.message));
