@@ -55,10 +55,10 @@ main{padding:34px clamp(18px,4vw,58px);max-width:1500px;width:100%;margin:auto}.
   <div class="sidebar-note">Облачная библиотека Cloud.ru и локальные треки этого устройства.</div>
 </aside>
 <main>
-  <div class="topbar"><div class="greeting"><h1>Добро пожаловать в Sonora</h1><p>Твоя музыка — всегда под рукой.</p></div><div class="actions"><input id="search" class="search" placeholder="⌕  Найти трек или исполнителя"><button class="primary" id="uploadBtn">＋ Добавить локально</button><input id="fileInput" type="file" accept="audio/*" multiple hidden></div></div>
+  <div class="topbar"><div class="greeting"><h1>Добро пожаловать в Sonora</h1><p>Твоя музыка — всегда под рукой.</p></div><div class="actions"><input id="search" class="search" placeholder="⌕  Найти трек или исполнителя"><button class="secondary" id="refreshCloudBtn">↻ Обновить каталог</button><button class="primary" id="uploadBtn">＋ Добавить локально</button><input id="fileInput" type="file" accept="audio/*" multiple hidden></div></div>
   <section class="hero"><div class="hero-card"><div class="hero-copy"><div class="eyebrow">ТВОЯ МУЗЫКА</div><h2>Звучание, которое подходит тебе</h2><p>Собери свою идеальную коллекцию.</p><button class="primary" id="heroUpload">Добавить локальные треки&nbsp; ↗</button></div><div class="disc"></div></div><div class="stat-card"><div class="stat-top">ТВОЯ КОЛЛЕКЦИЯ</div><div class="stat-num" id="trackCount">0 треков</div><div class="stat-bottom" id="storageInfo">Загрузка облачной библиотеки…</div></div></section>
   <div class="section-head" id="library"><h2>Недавно добавленные</h2><span id="listCount">0 композиций</span></div>
-  <div class="track-list" id="trackList"><div class="empty"><strong>Пока здесь тихо</strong>Добавь аудио в облачную библиотеку или выбери локальные файлы.<br><br><button class="secondary" id="emptyUpload">＋ Выбрать музыку</button></div></div>
+  <div class="track-list" id="trackList"><div class="empty"><strong>Пока здесь тихо</strong>Добавь аудио в Cloud.ru и нажми «Обновить каталог» или выбери локальные файлы.<br><br><button class="secondary" id="emptyUpload">＋ Выбрать музыку</button></div></div>
   <div class="section-head" id="equalizer"><h2>Эквалайзер</h2><span>10 полос · −12 / +12 dB</span></div>
   <section class="eq-panel"><div class="eq-top"><div><strong>Настрой звучание</strong><div class="track-meta">Изменения применяются к текущему воспроизведению</div></div><button class="secondary" id="eqToggle">Эквалайзер: Вкл.</button></div>
     <div class="eq-presets" id="presets"></div><div class="bands" id="bands"></div>
@@ -100,7 +100,7 @@ else{
 }
 
 const DB='sonora-web-db', STORE='tracks';
-const CLOUD_MANIFEST_URL='https://global.s3.cloud.ru/sonora-music/tracks.json';
+const CLOUD_BUCKET_URL='https://global.s3.cloud.ru/sonora-music';
 let db,tracks=[],localTracks=[],cloudTracks=[],current=-1,objectUrl=null,ctx=null,filters=[],eqOn=true,repeat=false,shuffle=false;
 
 const audio=$('audio');
@@ -121,22 +121,70 @@ function openDB(){return new Promise((resolve,reject)=>{let r=indexedDB.open(DB,
 function dbReq(mode,fn){return new Promise((resolve,reject)=>{let tx=db.transaction(STORE,mode),s=tx.objectStore(STORE),r=fn(s);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)})}
 function fmt(s){if(!Number.isFinite(s))return'0:00';return Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0')}
 function nameFromFile(n){return n.replace(/\.[^.]+$/,'').replace(/[_-]+/g,' ').trim()}
+const AUDIO_EXTENSIONS=/\.(mp3|m4a|mp4|aac|wav|flac|ogg|oga|opus|webm)$/i;
+
+function cloudObjectUrl(key){
+ return CLOUD_BUCKET_URL+'/'+key.split('/').map(encodeURIComponent).join('/');
+}
+function cloudTrackName(key){
+ const filename=key.split('/').pop().replace(/\.[^.]+$/,'');
+ const cleaned=nameFromFile(filename);
+ const parts=cleaned.split(/\s+-\s+/);
+ return parts.length>=2
+  ? {name:parts.slice(1).join(' - '),artist:parts[0]}
+  : {name:cleaned||'Без названия',artist:''};
+}
 async function loadCloudTracks(){
+ let objects=[],continuationToken=null;
+ do{
+   const params=new URLSearchParams({'list-type':'2'});
+   if(continuationToken)params.set('continuation-token',continuationToken);
+   const response=await fetch(CLOUD_BUCKET_URL+'?'+params.toString(),{method:'GET',cache:'no-store'});
+   if(!response.ok)throw new Error('HTTP '+response.status);
+   const xml=new DOMParser().parseFromString(await response.text(),'application/xml');
+   if(xml.querySelector('parsererror'))throw new Error('Cloud.ru вернул некорректный XML');
+   const errorNode=xml.getElementsByTagName('Error')[0];
+   if(errorNode)throw new Error(errorNode.getElementsByTagName('Message')[0]?.textContent||'Ошибка S3');
+   for(const item of Array.from(xml.getElementsByTagName('Contents'))){
+     const key=item.getElementsByTagName('Key')[0]?.textContent||'';
+     if(!key||key.endsWith('/')||!AUDIO_EXTENSIONS.test(key))continue;
+     const details=cloudTrackName(key);
+     objects.push({
+       id:'cloud-'+key,source:'cloud',name:details.name,artist:details.artist,
+       duration:0,size:Number(item.getElementsByTagName('Size')[0]?.textContent)||0,
+       key,url:cloudObjectUrl(key)
+     });
+   }
+   const truncated=xml.getElementsByTagName('IsTruncated')[0]?.textContent==='true';
+   continuationToken=truncated
+     ? xml.getElementsByTagName('NextContinuationToken')[0]?.textContent||null
+     : null;
+   if(truncated&&!continuationToken)throw new Error('Не получен токен следующей страницы списка');
+ }while(continuationToken);
+ return objects;
+}
+async function refreshCloudLibrary(){
+ const button=$('refreshCloudBtn'),oldLabel=button.textContent;
+ button.disabled=true;button.textContent='↻ Обновление…';
  try{
-  const response=await fetch(CLOUD_MANIFEST_URL,{cache:'no-store'});
-  if(!response.ok)throw new Error('HTTP '+response.status);
-  const data=await response.json();
-  if(!Array.isArray(data.tracks))throw new Error('В tracks.json нет массива tracks');
-  return data.tracks.filter(t=>t&&typeof t.url==='string'&&/^https:\/\//i.test(t.url)).map((t,i)=>({
-   id:'cloud-'+i,source:'cloud',name:String(t.title||t.name||'Без названия'),
-   artist:String(t.artist||''),duration:Number(t.duration)||0,size:Number(t.size)||0,
-   url:t.url
-  }));
- }catch(e){
-  console.warn('Cloud library unavailable:',e);
-  $('storageInfo').textContent='Облако пока недоступно · проверь tracks.json и CORS';
-  return [];
- }
+   const previousId=current>=0?tracks[current]?.id:null;
+   try{cloudTracks=await loadCloudTracks()}catch(e){cloudTracks=[];}
+   tracks=[...cloudTracks,...localTracks.map(t=>({...t,source:'local'}))];
+   if(previousId!==null){
+     const nextIndex=tracks.findIndex(t=>String(t.id)===String(previousId));
+     if(nextIndex>=0)current=nextIndex;
+     else if(String(previousId).startsWith('cloud-'))current=-1;
+   }
+   render();
+   $('storageInfo').textContent=`Облако: ${cloudTracks.length} · На этом устройстве: ${localTracks.length}`;
+   button.textContent='✓ Каталог обновлён';
+   setTimeout(()=>{if(button.isConnected)button.textContent=oldLabel},1800);
+ }catch(error){
+   console.warn('Cloud refresh failed:',error);
+   alert('Не удалось обновить каталог Cloud.ru: '+error.message+'\\n\\nПроверь публичный ListBucket и CORS.');
+   button.textContent='Ошибка обновления';
+   setTimeout(()=>{if(button.isConnected)button.textContent=oldLabel},2500);
+ }finally{button.disabled=false;}
 }
 async function init(){
  db=await openDB();
@@ -154,7 +202,7 @@ function render(){
  $('listCount').textContent=visible.length+' композиций';
  $('storageInfo').textContent=`Облако: ${cloudTracks.length} · На этом устройстве: ${localTracks.length}`;
  if(!visible.length){
-  $('trackList').innerHTML='<div class="empty"><strong>'+(tracks.length?'Ничего не найдено':'Пока здесь тихо')+'</strong>'+(tracks.length?'Попробуй изменить запрос.':'Добавь аудио в Cloud.ru и обнови tracks.json или выбери локальные файлы.')+'<br><br><button class="secondary" id="emptyUpload">＋ Выбрать музыку на устройстве</button></div>';
+  $('trackList').innerHTML='<div class="empty"><strong>'+(tracks.length?'Ничего не найдено':'Пока здесь тихо')+'</strong>'+(tracks.length?'Попробуй изменить запрос.':'Добавь аудио в Cloud.ru и нажми «Обновить каталог» или выбери локальные файлы.')+'<br><br><button class="secondary" id="emptyUpload">＋ Выбрать музыку на устройстве</button></div>';
   $('emptyUpload').onclick=chooseFiles;return;
  }
  $('trackList').innerHTML=visible.map(t=>`<div class="track" data-id="${esc(t.id)}"><div class="cover">♫</div><div><div class="track-name">${esc(t.name)}</div><div class="track-meta">${esc(t.artist||(t.source==='cloud'?'Cloud.ru':'На этом устройстве'))}</div></div><div class="duration">${t.duration?fmt(t.duration):'—'}</div>${t.source==='local'?`<button class="icon-btn delete" title="Удалить локальный трек" data-delete="${t.id}">✕</button>`:'<span></span>'}</div>`).join('');
@@ -174,7 +222,7 @@ function render(){
 }
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function chooseFiles(){$('fileInput').click()}
-$('uploadBtn').onclick=chooseFiles;$('heroUpload').onclick=chooseFiles;
+$('uploadBtn').onclick=chooseFiles;$('heroUpload').onclick=chooseFiles;$('refreshCloudBtn').onclick=refreshCloudLibrary;
 $('fileInput').onchange=async e=>{
  for(let f of e.target.files){
   if(!f.type.startsWith('audio/'))continue;
